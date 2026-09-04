@@ -1,0 +1,501 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://creditweave/agent-dsl/agent.schema.json",
+  "title": "Agent DSL v1 (components-first)",
+  "description": "声明式智能体定义规范（agent-dsl/v1, v0.3）。components 是唯一能力声明面；无 legacy 顶层块。",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "identity", "components", "gate"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "agent-dsl/v1"},
+    "kind": {"const": "Agent"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "identity": {"$ref": "#/$defs/identity"},
+    "runtime": {"$ref": "#/$defs/runtime"},
+    "components": {
+      "type": "array",
+      "description": "业务组件——唯一能力声明面。九种 kind：tool/bridge/skill/workflow/knowledge/persona/gate/output/review。",
+      "items": {"$ref": "#/$defs/component"}
+    },
+    "assembly": {"$ref": "#/$defs/assembly"},
+    "seats": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/seat"}
+    },
+    "gate": {"$ref": "#/$defs/gate"},
+    "knowledge": {"$ref": "#/$defs/knowledge"},
+    "memory": {"$ref": "#/$defs/memory"},
+    "evolution": {"$ref": "#/$defs/evolution"},
+    "coms": {"$ref": "#/$defs/coms"},
+    "launch": {"$ref": "#/$defs/launch"},
+    "settings": {"$ref": "#/$defs/settings"}
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["id", "name", "purpose", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "coms cname / 目录名 / 工具前缀推导依据。同一 coms project 内唯一。"
+        },
+        "name": {"type": "string", "minLength": 1},
+        "purpose": {"type": "string", "minLength": 1, "description": "coms purpose，与 team SSOT 同步"},
+        "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "domain": {"type": "string"},
+        "icon": {"type": "string"},
+        "color": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+        "team": {"type": "string", "description": "团队 SSOT 文件路径，如 ../../team.json"}
+      }
+    },
+
+    "identity": {
+      "type": "object",
+      "required": ["role", "red_lines", "can", "cannot"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {"type": "string", "minLength": 1},
+        "red_lines": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "必须显式声明（可为空数组）。lint：每条红线必须有 gate 规则兜底。"
+        },
+        "can": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "cannot": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "consult": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "voice": {"type": "string"},
+            "routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["topic", "target"],
+                "additionalProperties": false,
+                "properties": {
+                  "topic": {"type": "string"},
+                  "target": {"type": "string", "description": "目标坐席 cname"}
+                }
+              }
+            },
+            "unknown_policy": {"type": "string"}
+          }
+        },
+        "output_style": {"type": "string"}
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "执行壳与适配器声明（SPEC 4.1/4.2）。adapter 为 runtime 资产，不进组件 registry。",
+      "properties": {
+        "kind": {"const": "pi"},
+        "adapters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": {"enum": ["none", "openviking"]},
+            "evolution": {"enum": ["none", "self-evolve"]},
+            "ui": {"type": "string"},
+            "execution": {"type": "string"}
+          }
+        }
+      }
+    },
+
+    "component": {
+      "type": "object",
+      "required": ["id", "kind", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "组件 id，registry 内唯一"
+        },
+        "kind": {
+          "enum": ["tool", "bridge", "skill", "workflow", "knowledge", "persona", "gate", "output", "review"]
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^(local:|registry:|inline:)",
+          "description": "local:./path | registry:name@version | inline:"
+        },
+        "version": {"type": "string"},
+        "description": {"type": "string"},
+        "provides": {
+          "type": "object",
+          "description": "接口声明（编译期检查的唯一依据）。结构随 kind 而定，见 SPEC 7.5。"
+        },
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "tool": {"type": "string"},
+              "bridge": {"type": "string", "description": "<component-id>.<action> 或 <bridge>.<action>"},
+              "skill": {"type": "string"},
+              "knowledge": {"type": "string"},
+              "env": {"type": "string"},
+              "platform": {"type": "string", "description": "依赖的 runtime 能力，如 workflow-core"}
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "readonly": {"type": "boolean"},
+            "side_effect": {
+              "enum": ["read_only", "workspace_write", "candidate_write", "artifact_write", "egress", "custom"]
+            },
+            "write_paths": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "inline": {
+          "type": "object",
+          "description": "source=inline: 时的组件内容（语法糖，编译器归一为匿名组件）"
+        }
+      }
+    },
+
+    "assembly": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "组件组织层：components 是零件，assembly 是零件之间的组织关系。",
+      "properties": {
+        "entrypoints": {
+          "type": "array",
+          "items": {"type": "string", "description": "入口组件 id"}
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "components"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "seat": {"type": "string"},
+              "components": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+              "mode": {"enum": ["main", "optional", "fallback", "review"]}
+            }
+          }
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "additionalProperties": false,
+            "properties": {
+              "from": {"type": "string", "description": "组件 id"},
+              "to": {"type": "string", "description": "组件 id"},
+              "kind": {"enum": ["main", "optional", "fallback", "review"]},
+              "when": {"type": "string", "description": "可选流转条件"}
+            }
+          }
+        },
+        "checkpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["at", "required"],
+            "additionalProperties": false,
+            "properties": {
+              "at": {"type": "string", "description": "组件 id"},
+              "required": {"type": "boolean"},
+              "prompt": {"type": "string"}
+            }
+          }
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+
+    "seat": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "anyOf": [{"required": ["persona"]}, {"required": ["persona_ref"]}],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "name": {"type": "string"},
+        "persona": {
+          "type": "string",
+          "description": "内联人设文本（语法糖，归一为匿名 persona 组件）。与 persona_ref 二选一。"
+        },
+        "persona_ref": {
+          "type": "string",
+          "description": "引用 persona 组件 id。与 persona 二选一。"
+        },
+        "groups": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "归属的 assembly 分组名"
+        },
+        "readonly": {"type": "boolean"},
+        "coms": {"enum": ["active", "quiet"]},
+        "extensions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent 级边界策略。与 gate 组件按固定安全语义合并：deny/zero_access 并集不可移除，write_allow 可收窄不可放大。",
+      "properties": {
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "write_allow": {"type": "array", "items": {"type": "string"}},
+            "delete_rule": {"enum": ["single_candidate_only", "none", "free"]},
+            "param_check": {"type": "boolean", "default": true}
+          }
+        },
+        "bash": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow_presets": {
+              "type": "array",
+              "items": {"enum": ["readonly", "git_add_commit", "python_tools", "drawio", "controlled_cli"]}
+            },
+            "allow": {"type": "array", "items": {"type": "string"}},
+            "deny_presets": {
+              "type": "array",
+              "items": {"enum": ["network", "install", "git_push", "rm_rf", "inline_code", "dangerous_git"]}
+            },
+            "deny": {"type": "array", "items": {"type": "string"}},
+            "redirects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "message"],
+                "additionalProperties": false,
+                "properties": {
+                  "pattern": {"type": "string"},
+                  "message": {"type": "string"},
+                  "use_tool": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "policy": {"enum": ["deny_all", "whitelist"]},
+            "allow": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "zero_access": {"type": "array", "items": {"type": "string"}},
+        "knowledge_write": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "candidate_only": {"type": "boolean"}
+          }
+        }
+      }
+    },
+
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent 级知识生命周期策略。知识域与 schema 由 knowledge 组件声明。",
+      "properties": {
+        "root": {"type": "string"},
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "agent_write": {"enum": ["candidate_only", "workspace_only", "free"]},
+            "candidate_prefix": {"type": "string"},
+            "promote": {
+              "type": "object",
+              "required": ["command"],
+              "additionalProperties": false,
+              "properties": {
+                "command": {"type": "string"},
+                "post_validate": {"type": "boolean"}
+              }
+            },
+            "manifest": {"type": "boolean"}
+          }
+        },
+        "citations": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "require_source": {"type": "boolean"},
+            "drift_check": {"type": "boolean"}
+          }
+        }
+      }
+    },
+
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "会话记忆后端（可选块，SPEC 12）。与 knowledge 分层：memory 管上下文，knowledge 管被批准的事实。",
+      "properties": {
+        "backend": {"enum": ["none", "openviking"]},
+        "server_env": {"type": "string", "description": "只允许 env 变量名（如 OPENVIKING_URL），值不进 DSL"},
+        "recall": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "token_budget": {"type": "integer", "minimum": 0},
+            "score_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+            "prefer_abstract": {"type": "boolean"}
+          }
+        },
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "mode": {"enum": ["semantic", "raw"]},
+            "tool_results": {"type": "boolean"},
+            "assistant_turns": {"type": "boolean"}
+          }
+        },
+        "takeover": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "token_threshold": {"type": "integer", "minimum": 0},
+            "keep_recent_turns": {"type": "integer", "minimum": 0},
+            "overview_budget": {"type": "integer", "minimum": 0}
+          }
+        },
+        "peer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workspace_peer": {"type": "boolean"},
+            "recall_scope": {"enum": ["all", "workspace", "self"]}
+          }
+        },
+        "bypass_patterns": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "不进入记忆的内容模式。lint：gate.zero_access 必须全部出现在此"
+        }
+      }
+    },
+
+    "evolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "经验自进化闭环（可选块，SPEC 13）。采集自动、进化人工、候选永不直接生效。",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_tool_calls": {"type": "integer", "minimum": 1},
+            "max_trace_chars": {"type": "integer", "minimum": 0},
+            "max_candidates": {"type": "integer", "minimum": 1},
+            "incremental": {"type": "boolean", "default": true}
+          }
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trigger": {
+              "enum": ["manual", "pr"],
+              "description": "manual=个人坐席；pr=团队坐席（候选进 git PR，与 promote 同闸门）。挂 team SSOT 时必须为 pr"
+            },
+            "checks": {
+              "type": "array",
+              "items": {"enum": ["format", "dedup", "value"]}
+            },
+            "preflight_script": {"type": "boolean", "default": true}
+          }
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "idle_days": {"type": "integer", "minimum": 1},
+            "fail_threshold": {"type": "integer", "minimum": 1},
+            "max_skills": {"type": "integer", "minimum": 1}
+          }
+        },
+        "memory_files": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "user": {"type": "string"},
+            "lessons": {"type": "string"}
+          }
+        }
+      }
+    },
+
+    "coms": {
+      "type": "object",
+      "required": ["project"],
+      "additionalProperties": false,
+      "properties": {
+        "project": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "auto_reply": {"type": "boolean", "default": true},
+        "delivery": {"const": "filesystem"},
+        "human_gates_via_coms": {"const": false}
+      }
+    },
+
+    "launch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binary": {"type": "string", "default": "pi"},
+        "base_flags": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": ["-ne", "-ns", "-nc"],
+          "description": "默认关自动发现；覆盖时 lint 警告"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+              "seats": {"const": "all"},
+              "seat": {"type": "string"},
+              "coms": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "theme": {"type": "string"},
+        "auto_load": {"type": "boolean", "default": true}
+      }
+    }
+  }
+}

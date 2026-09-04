@@ -1,0 +1,141 @@
+# 最小可用智能体：一个只读问答坐席（纯 components-first）
+# 全部组件内联声明，编译器归一为匿名组件；agen init 生成骨架后只需填这些
+apiVersion: agent-dsl/v1
+kind: Agent
+
+metadata:
+  id: faq-bot
+  name: 制度问答坐席
+  purpose: 信贷制度文档问答（只读）
+  version: 0.1.0
+  domain: credit
+  icon: 📖
+  color: "#4a6fa5"
+
+identity:
+  role: |
+    你是制度问答坐席，回答信贷制度文档相关的问题。
+    所有结论必须带文档出处（《文档名》§章节），查不到就明说不知道。
+  red_lines:
+    - 制度文档只读，禁止修改任何文档
+  can:
+    - 检索制度文档并带出处回答
+  cannot:
+    - 不回答代码层事实，路由给 tech-expert
+    - 判断不了的业务语义不猜，登记 unknown
+  consult:
+    routes:
+      - topic: 代码层事实
+        target: tech-expert
+
+components:
+  - id: fq-tool
+    kind: tool
+    source: "inline:"
+    provides:
+      tool:
+        name: fq_doc_search
+        description: 制度文档章节检索
+        phase: search
+        params:
+          type: object
+          properties:
+            query: {type: string}
+          required: [query]
+    requires:
+      - bridge: faq-bridge.doc_search
+    policy:
+      readonly: true
+      side_effect: read_only
+
+  - id: faq-bridge
+    kind: bridge
+    source: local:./components/faq-bridge    # 实现（python）由开发者写，编译器原样打包
+    provides:
+      bridge:
+        name: faq_bridge
+        actions: [doc_search]
+        reads: [knowledge/documents/]
+
+  - id: faq-answer-skill
+    kind: skill
+    source: "inline:"
+    provides:
+      skill:
+        name: faq-answer
+        description: 制度问答工作流：当用户询问信贷制度/流程/规定时使用
+        phases:
+          - id: search
+            guide: 用 fq_doc_search 检索相关章节
+            tools: [fq_doc_search]
+            exit_criteria: 命中至少一个相关章节
+          - id: answer
+            guide: 基于命中章节组织回答，必须带《文档名》§章节出处；未命中明说不知道
+        guardrails:
+          - 同一工具连续 3 次失败即停下报告，不绕过
+
+  - id: faq-flow
+    kind: workflow
+    source: "inline:"
+    provides:
+      workflow:
+        name: faq-flow
+        seat: default
+        widget: single_line
+        phases: [search, answer]
+        transitions:
+          - from: search
+            to: answer
+
+  - id: faq-knowledge
+    kind: knowledge
+    source: local:./components/faq-knowledge
+    provides:
+      knowledge:
+        domain: documents
+
+assembly:
+  entrypoints: [fq-tool, faq-answer-skill]
+  groups:
+    - name: faq-path
+      seat: default
+      components: [fq-tool, faq-bridge, faq-answer-skill, faq-flow, faq-knowledge]
+      mode: main
+  routes:
+    - from: fq-tool
+      to: faq-bridge
+      kind: main
+  checkpoints: []
+  notes:
+    - 单席位只读问答：search → answer，无写路径
+
+seats:
+  - id: default
+    name: 问答席位
+    persona: |
+      你是制度问答席位。工作流细节见 faq-answer skill。
+    groups: [faq-path]
+    readonly: true
+    coms: quiet
+
+gate:
+  filesystem:
+    write_allow: []          # 完全只读坐席
+  bash:
+    allow_presets: [readonly, python_tools]
+    deny_presets: [network, install, git_push, rm_rf, inline_code]
+  egress:
+    policy: deny_all
+
+knowledge:
+  root: knowledge/
+  lifecycle:
+    agent_write: candidate_only
+    candidate_prefix: "candidate_"
+
+coms:
+  project: credit
+
+settings:
+  model: null
+  theme: nord

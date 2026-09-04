@@ -1,0 +1,395 @@
+# 复杂示例：agent_data_asset 的纯 components-first 投影（节选，展示表达能力）
+# 对照：agent_data_asset/.pi/ + extensions/ + tools/ + knowledge/
+apiVersion: agent-dsl/v1
+kind: Agent
+
+metadata:
+  id: data-asset
+  name: 信贷数据资产管理
+  purpose: 信贷数据资产管理（契约/语义/血缘/画像）
+  version: 0.3.0
+  domain: credit
+  icon: 🗄️
+  color: "#0e9594"
+  team: team.json          # 团队 SSOT 路径（示例）
+
+identity:
+  role: |
+    你是 CreditData Agent——CreditData 信贷数据资产平台的对话式数据标准工作台。
+    三条工作流：查询流（copilot）/ 沉淀流（steward）/ 语义梳理流（curator）。
+  red_lines:
+    - 生产库只读；凭据只从环境变量读
+    - agent 只写 candidate_*（contracts/ 或 semantic/ 子目录），正式生效必须人工 promote
+    - 明文 PII 不进 prompt、不画进图、不返回原始样本值
+    - git push 硬拦，推远端建 PR 由人做
+  can:
+    - 字段口径查询（信任层级：契约定版 > candidate > draft）
+    - 泄漏检查、影响面分析、血缘追溯
+    - 单表沉淀 candidate 契约（双源探索：DB + 代码必备）
+    - 跨表语义收敛（candidate 语义 catalog/mapping + issues）
+  cannot:
+    - 不拍板 pending_owner 语义问题，只上报
+    - 业务语义代码判断不了的登记 unknown 转呈用户
+  consult:
+    voice: 坐席 data-asset 对外一个声音，三条流都可能接入站会诊
+    routes:
+      - topic: 代码层事实
+        target: tech-expert
+      - topic: 运行时批状态
+        target: batch-duty
+    unknown_policy: 对方答不了的业务语义接受 unknown 编号转呈用户；不转发不代答
+  output_style: |
+    中文自由文本；代码/YAML key/字段名/路径保持原样；出处必带 file:line。
+
+components:
+  # ---- tool 组件（copilot 查询席位，只读）----
+  - id: ds-explain-field
+    kind: tool
+    source: registry:ds-explain-field@1.2.0
+    version: 1.2.0
+    provides:
+      tool:
+        name: ds_explain_field
+        description: 字段口径查询，返回信任分层（high/medium/low）与出处
+        phase: locate
+        params:
+          type: object
+          properties:
+            dataset: {type: string}
+            field: {type: string}
+          required: [dataset, field]
+    requires:
+      - bridge: knowledge-bridge.explain_field
+      - env: RISK_DB_URL
+    policy: {readonly: true, side_effect: read_only}
+
+  - id: ds-check-leakage
+    kind: tool
+    source: registry:ds-check-leakage@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_check_leakage
+        description: PIT 泄漏/标签泄漏规则检查
+        phase: rule-check
+    requires:
+      - bridge: knowledge-bridge.check_leakage
+    policy: {readonly: true, side_effect: read_only}
+
+  - id: ds-impact
+    kind: tool
+    source: registry:ds-impact@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_impact
+        description: 下游影响面（血缘图 BFS），返回标 coverage=partial
+        phase: impact
+    requires:
+      - bridge: knowledge-bridge.impact
+    policy: {readonly: true, side_effect: read_only}
+
+  # ---- tool 组件（steward 沉淀席位）----
+  - id: ds-db-explore
+    kind: tool
+    source: registry:ds-db-explore@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_db_explore
+        description: 生产库只读探索（PII 源头脱敏：high_plain 只给聚合统计）
+        phase: explore
+    requires:
+      - bridge: knowledge-bridge.db_explore
+      - env: RISK_DB_URL
+    policy: {readonly: true, side_effect: read_only}
+
+  - id: ds-code-index
+    kind: tool
+    source: registry:ds-code-index@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_code_index
+        description: 离线代码结构图谱查询（影响面=语法可达上界，标 static-snapshot @ commit）
+        phase: explore
+    requires:
+      - bridge: knowledge-bridge.code_index
+      - env: RD_JCA_JAR
+    policy: {readonly: true, side_effect: read_only}
+
+  - id: ds-suggest-contract
+    kind: tool
+    source: registry:ds-suggest-contract@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_suggest_contract
+        description: 生成 candidate 契约草稿（origin/role 双轴，口径必带 file:line）
+        phase: draft
+    requires:
+      - bridge: knowledge-bridge.suggest_contract
+    policy: {readonly: false, side_effect: candidate_write, write_paths: ["knowledge/contracts/candidate_*.json"]}
+
+  - id: ds-validate
+    kind: tool
+    source: registry:ds-validate@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_validate
+        description: 全库校验（JSON Schema + 引用完整性 + 血缘 DAG 无环），0 errors 才可交付
+        phase: validate
+    requires:
+      - bridge: knowledge-bridge.validate
+    policy: {readonly: true, side_effect: read_only}
+
+  # ---- tool 组件（curator 语义梳理席位）----
+  - id: ds-sem-handoff
+    kind: tool
+    source: registry:ds-sem-handoff@1.0.0
+    version: 1.0.0
+    provides:
+      tool:
+        name: ds_sem_handoff
+        description: 落盘 candidate 语义 catalog/mapping + semantic_issues
+        phase: handoff
+    requires:
+      - bridge: knowledge-bridge.sem_handoff
+    policy: {readonly: false, side_effect: candidate_write, write_paths: ["knowledge/semantic/candidate_*.json", "knowledge/semantic/semantic_issues.json"]}
+
+  # ---- bridge 组件（确定性执行层，facts-only）----
+  - id: knowledge-bridge
+    kind: bridge
+    source: local:./components/knowledge-bridge
+    provides:
+      bridge:
+        name: knowledge_bridge
+        actions: [explain_field, check_leakage, impact, validate, db_explore, code_index, suggest_contract, sem_handoff]
+        reads: [knowledge/]
+    requires:
+      - env: RISK_DB_URL
+      - env: RD_CODE_PATH
+      - env: RD_JCA_JAR
+
+  # ---- skill 组件（三席位工作流软引导）----
+  - id: risk-dev-copilot-skill
+    kind: skill
+    source: local:./components/risk-dev-copilot-skill
+    provides:
+      skill:
+        name: risk-dev-copilot
+        description: 查询流引导：当数据消费者问"某字段能不能用/怎么用"时使用
+        phases:
+          - id: locate
+            guide: 定位字段/数据集，确认信任层级
+            tools: [ds_explain_field]
+            exit_criteria: 字段已定位且信任层级已知
+          - id: rule-check
+            guide: 泄漏/PII 规则检查
+            tools: [ds_check_leakage]
+          - id: answer
+            guide: 按信任分层如实回答，draft 必须声明"未经人审"
+          - id: impact
+            guide: 需要影响面时走血缘
+            tools: [ds_impact]
+        guardrails:
+          - 同一工具连续 3 次失败即停下报告
+
+  - id: knowledge-steward-skill
+    kind: skill
+    source: local:./components/knowledge-steward-skill
+    provides:
+      skill:
+        name: knowledge-steward
+        description: 沉淀流引导：当数据开发者要把一张表的口径/标准沉淀为契约时使用
+        phases:
+          - id: explore
+            guide: 双源探索硬规则——只跑 db_explore 就下业务语义结论是不完整的
+            tools: [ds_db_explore, ds_code_index]
+          - id: draft
+            guide: 生成 candidate 契约，origin/role 双轴，口径必带 file:line
+            tools: [ds_suggest_contract]
+          - id: validate
+            guide: ds_validate 0 errors 才可交付
+            tools: [ds_validate]
+            exit_criteria: validate 0 errors + 审核报告出处机器校验通过
+
+  - id: semantic-curator-skill
+    kind: skill
+    source: local:./components/semantic-curator-skill
+    provides:
+      skill:
+        name: semantic-curator
+        description: 语义梳理流引导：跨表批量收敛同义字段为概念层时使用
+        phases:
+          - id: triage
+            guide: 问题三分类：就地修复 / 上报 Owner（不拍板）/ 转 ETL
+          - id: handoff
+            guide: 落盘 candidate + issues，交接人工审核
+            tools: [ds_sem_handoff]
+
+  # ---- workflow 组件（三席位 phase 状态机）----
+  - id: copilot-flow
+    kind: workflow
+    source: "inline:"
+    provides:
+      workflow:
+        name: copilot-flow
+        seat: copilot
+        widget: single_line
+        phases: [locate, retrieve, rule-check, answer, impact]
+
+  - id: steward-flow
+    kind: workflow
+    source: "inline:"
+    provides:
+      workflow:
+        name: steward-flow
+        seat: steward
+        widget: single_line
+        phases: [explore, inspect, draft, mapping, validate, handoff]
+        human_checkpoints:
+          - at: validate
+            prompt: validate 0 errors 后才允许交付，交接人工 promote
+
+  # ---- knowledge 组件（知识域 + builder）----
+  - id: contracts-knowledge
+    kind: knowledge
+    source: local:./components/contracts-knowledge
+    provides:
+      knowledge:
+        domain: contracts
+        schema: knowledge/schemas/dataset_contract.schema.json
+
+  # ---- review 组件（交付审查）----
+  - id: contract-review
+    kind: review
+    source: local:./components/contract-review
+    provides:
+      review:
+        checks:
+          - {id: schema-validate, kind: schema, tool: ds_validate, severity: error}
+          - {id: citations-check, kind: citations, severity: warn}
+
+assembly:
+  entrypoints: [ds-explain-field, ds-suggest-contract]
+  groups:
+    - name: query-path
+      seat: copilot
+      components: [ds-explain-field, ds-check-leakage, ds-impact, risk-dev-copilot-skill, copilot-flow]
+      mode: main
+    - name: steward-path
+      seat: steward
+      components: [ds-db-explore, ds-code-index, ds-suggest-contract, ds-validate, knowledge-steward-skill, steward-flow, contracts-knowledge, contract-review]
+      mode: main
+    - name: curator-path
+      seat: curator
+      components: [ds-sem-handoff, semantic-curator-skill]
+      mode: main
+  routes:
+    - from: ds-explain-field
+      to: ds-check-leakage
+      kind: main
+    - from: ds-check-leakage
+      to: ds-impact
+      kind: optional
+    - from: ds-db-explore
+      to: ds-code-index
+      kind: main
+    - from: ds-code-index
+      to: ds-suggest-contract
+      kind: main
+    - from: ds-suggest-contract
+      to: ds-validate
+      kind: main
+    - from: ds-validate
+      to: ds-sem-handoff
+      kind: main
+  checkpoints:
+    - at: ds-suggest-contract
+      required: true
+      prompt: candidate 契约生成后必须校验，再进入交付
+    - at: ds-validate
+      required: true
+      prompt: validate 0 errors 才允许沉淀或交付
+  notes:
+    - query_path 偏只读问答，steward_path 偏知识沉淀，curator_path 偏语义收敛
+    - 组织关系由 assembly 显式声明，平台负责编译和约束
+
+seats:
+  - id: copilot
+    name: 查询席位
+    persona: |
+      你是查询席位，只读问答 + 会诊协议。工作流细节见 risk-dev-copilot skill。
+    groups: [query-path]
+    readonly: true
+    coms: quiet
+  - id: steward
+    name: 沉淀席位
+    persona: |
+      你是沉淀席位，单表沉淀 candidate 契约，ds_validate 必过。见 knowledge-steward skill。
+    groups: [steward-path]
+    coms: quiet
+  - id: curator
+    name: 语义梳理席位
+    persona: |
+      你是语义梳理席位，只产 candidate + issues，pending_owner 只上报不拍板。见 semantic-curator skill。
+    groups: [curator-path]
+    coms: quiet
+
+gate:
+  filesystem:
+    write_allow:
+      - knowledge/**/candidate_*.json
+      - knowledge/**/semantic_issues.json
+      - knowledge/diagrams/**
+    delete_rule: single_candidate_only
+    param_check: true
+  bash:
+    allow_presets: [readonly, git_add_commit, python_tools, drawio]
+    deny_presets: [network, install, git_push, rm_rf, inline_code]
+    deny:
+      - "knowledge promote"        # 晋升命令对 agent 硬拦，只能人工
+      - "knowledge manifest"
+  egress:
+    policy: deny_all
+  knowledge_write:
+    candidate_only: true
+
+knowledge:
+  root: knowledge/
+  lifecycle:
+    agent_write: candidate_only
+    candidate_prefix: "candidate_"
+    promote:
+      command: rdp knowledge promote
+      post_validate: true
+    manifest: true
+  citations:
+    require_source: true
+    drift_check: true
+
+coms:
+  project: credit
+  auto_reply: true
+
+launch:
+  base_flags: [-ne, -ns, -nc]
+  entries:
+    - name: rd
+      seats: all
+      coms: true
+    - name: rd-copilot
+      seat: copilot
+      coms: false
+    - name: rd-steward
+      seat: steward
+      coms: false
+    - name: rd-curator
+      seat: curator
+      coms: false
+
+settings:
+  model: null
+  auto_load: true
