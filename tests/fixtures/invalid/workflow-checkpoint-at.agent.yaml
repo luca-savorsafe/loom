@@ -1,0 +1,31 @@
+apiVersion: agent-dsl/v1alpha1
+kind: Agent
+metadata: {id: invalid-checkpoint, name: Invalid, purpose: Test, version: 0.4.0}
+identity:
+  role: Test agent
+  red_lines:
+    - {id: no-write, statement: Do not write, enforced_by: [gate.filesystem]}
+  can: [test]
+  cannot: [write]
+runtime: {kind: pi, version: 0.1.0, adapters: {ui: headless, execution: extensions}}
+components:
+  - id: bad-flow
+    kind: workflow
+    version: 0.1.0
+    source: {type: inline}
+    effects: []
+    spec:
+      name: bad-flow
+      seat: default
+      initial: run
+      phases: [{id: run}]
+      human_checkpoints:
+        - {at: run, required: true, approval: one_time, prompt: Wrong field name}
+assembly:
+  groups:
+    - {id: main, components: [bad-flow], mode: main}
+gate:
+  default: deny
+  filesystem: {write_allow: [], delete_rule: none, param_check: true}
+  bash: {allow_presets: [], deny_presets: []}
+  egress: {policy: deny_all}

@@ -1,0 +1,513 @@
+# 复杂示例：多席位数据资产智能体。
+# 重点展示 typed component、最小权限 resource、唯一 workflow 图和 candidate 生命周期。
+apiVersion: agent-dsl/v1alpha1
+kind: Agent
+
+metadata:
+  id: data-asset
+  name: 信贷数据资产管理
+  purpose: 信贷数据资产管理（契约、语义、血缘、画像）
+  version: 0.4.0
+  domain: credit
+  icon: 🗄️
+  color: "#0e9594"
+  team: team.json
+
+identity:
+  role: |
+    你是 CreditData Agent，提供查询、candidate 沉淀和跨表语义梳理三个动作面。
+    事实由确定性 bridge 提供，业务判断无法证明时登记 unknown。
+  red_lines:
+    - id: production-readonly
+      statement: 生产库只读，凭据只注入到声明依赖 risk-db 的 bridge
+      enforced_by: [resource:risk-db, runtime:credential-isolation]
+    - id: candidate-only
+      statement: Agent 只写 candidate 或 issue 产物，正式生效必须由人批准
+      enforced_by: [gate.filesystem, gate.knowledge_write]
+    - id: pii-protection
+      statement: 明文 PII 不进入 Prompt、图或最终输出
+      enforced_by: [resource:risk-db, gate.data]
+    - id: no-git-push
+      statement: 禁止 Agent 执行 git push
+      enforced_by: [gate.bash]
+  can:
+    - 字段口径、泄漏规则和影响面查询
+    - 生成并校验 candidate 契约
+    - 生成 candidate 语义目录和待处理问题
+  cannot:
+    - 拍板 pending_owner 业务语义
+    - 晋升正式知识或执行生产写操作
+  consult:
+    voice: 三个席位对外保持一个 Agent 身份
+    routes:
+      - {topic: 代码层事实, target: tech-expert}
+      - {topic: 运行时批状态, target: batch-duty}
+    unknown_policy: 无法由事实源证明的业务语义登记 unknown 后转交用户
+  output_style: 中文说明；字段名、路径和 YAML key 保持原样；事实结论必须带出处。
+
+runtime:
+  kind: pi
+  version: 0.4.0
+  adapters:
+    memory: none
+    evolution: none
+    ui: tui
+    execution: extensions
+
+resources:
+  - id: risk-db
+    kind: database
+    access: read_only
+    locator: {connection_env: RISK_DB_URL}
+    data_labels: [confidential, pii]
+  - id: source-code
+    kind: filesystem
+    access: read_only
+    locator: {path_env: RD_CODE_PATH}
+    data_labels: [internal]
+  - id: jca
+    kind: executable
+    access: execute
+    locator: {path_env: RD_JCA_JAR}
+    data_labels: [internal]
+  - id: knowledge-store
+    kind: knowledge
+    access: read_write
+    locator: {path: knowledge}
+    data_labels: [internal]
+
+components:
+  # LLM-facing tools contain only interface, binding and execution metadata.
+  - id: ds-explain-field
+    kind: tool
+    version: 1.2.0
+    source: {type: registry, name: ds-explain-field, version: 1.2.0}
+    spec:
+      name: ds_explain_field
+      description: 查询字段口径、信任层级与出处
+      inputSchema:
+        type: object
+        additionalProperties: false
+        required: [dataset, field]
+        properties:
+          dataset: {type: string, minLength: 1}
+          field: {type: string, minLength: 1}
+      outputSchema: &tool-result
+        type: object
+        required: [status, summary, details]
+        properties:
+          status: {enum: [success, error]}
+          summary: {type: string}
+          details: {type: object}
+          error_kind: {type: string}
+          recovery_hint: {type: string}
+      binding: {bridge: knowledge-query-bridge, action: explain_field}
+      phase: locate
+      execution: {timeout_seconds: 30, idempotent: true}
+    requires:
+      - {type: bridge, ref: knowledge-query-bridge, action: explain_field}
+    effects: []
+
+  - id: ds-check-leakage
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-check-leakage, version: 1.0.0}
+    spec:
+      name: ds_check_leakage
+      description: 执行 PIT 泄漏和标签泄漏规则检查
+      inputSchema: &empty-input {type: object, additionalProperties: false}
+      outputSchema: *tool-result
+      binding: {bridge: knowledge-query-bridge, action: check_leakage}
+      phase: rule-check
+      execution: {timeout_seconds: 30, idempotent: true}
+    requires:
+      - {type: bridge, ref: knowledge-query-bridge, action: check_leakage}
+    effects: []
+
+  - id: ds-impact
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-impact, version: 1.0.0}
+    spec:
+      name: ds_impact
+      description: 查询带覆盖范围标识的下游影响面
+      inputSchema: *empty-input
+      outputSchema: *tool-result
+      binding: {bridge: knowledge-query-bridge, action: impact}
+      phase: impact
+      execution: {timeout_seconds: 60, idempotent: true}
+    requires:
+      - {type: bridge, ref: knowledge-query-bridge, action: impact}
+    effects: []
+
+  - id: ds-db-explore
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-db-explore, version: 1.0.0}
+    spec:
+      name: ds_db_explore
+      description: 生产库只读探索，PII 在数据源侧脱敏
+      inputSchema: *empty-input
+      outputSchema: *tool-result
+      binding: {bridge: db-read-bridge, action: db_explore}
+      phase: explore-db
+      execution: {timeout_seconds: 60, idempotent: true}
+    requires:
+      - {type: bridge, ref: db-read-bridge, action: db_explore}
+    effects: []
+
+  - id: ds-code-index
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-code-index, version: 1.0.0}
+    spec:
+      name: ds_code_index
+      description: 查询带 commit 标识的离线代码结构图谱
+      inputSchema: *empty-input
+      outputSchema: *tool-result
+      binding: {bridge: code-read-bridge, action: code_index}
+      phase: explore-code
+      execution: {timeout_seconds: 60, idempotent: true}
+    requires:
+      - {type: bridge, ref: code-read-bridge, action: code_index}
+    effects: []
+
+  - id: ds-suggest-contract
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-suggest-contract, version: 1.0.0}
+    spec:
+      name: ds_suggest_contract
+      description: 生成 candidate 契约草稿
+      inputSchema: *empty-input
+      outputSchema: *tool-result
+      binding: {bridge: candidate-write-bridge, action: suggest_contract}
+      phase: draft
+      execution: {timeout_seconds: 60, idempotent: false}
+    requires:
+      - {type: bridge, ref: candidate-write-bridge, action: suggest_contract}
+    effects: []
+
+  - id: ds-validate
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-validate, version: 1.0.0}
+    spec:
+      name: ds_validate
+      description: 执行 Schema、引用和血缘完整性校验
+      inputSchema: *empty-input
+      outputSchema: *tool-result
+      binding: {bridge: knowledge-query-bridge, action: validate}
+      phase: validate
+      execution: {timeout_seconds: 120, idempotent: true}
+    requires:
+      - {type: bridge, ref: knowledge-query-bridge, action: validate}
+    effects: []
+
+  - id: ds-sem-handoff
+    kind: tool
+    version: 1.0.0
+    source: {type: registry, name: ds-sem-handoff, version: 1.0.0}
+    spec:
+      name: ds_sem_handoff
+      description: 写入 candidate 语义目录和 semantic issues
+      inputSchema: *empty-input
+      outputSchema: *tool-result
+      binding: {bridge: candidate-write-bridge, action: sem_handoff}
+      phase: handoff
+      execution: {timeout_seconds: 60, idempotent: false}
+    requires:
+      - {type: bridge, ref: candidate-write-bridge, action: sem_handoff}
+    effects: []
+
+  # Bridges are split by authority boundary; a read action cannot inherit candidate-write access.
+  - id: knowledge-query-bridge
+    kind: bridge
+    version: 0.4.0
+    source: {type: local, path: components/knowledge-query-bridge}
+    spec:
+      name: knowledge_query_bridge
+      runtime: python
+      entrypoint: bridge.py
+      facts_only: true
+      actions: [explain_field, check_leakage, impact, validate]
+    requires:
+      - {type: resource, ref: knowledge-store}
+    effects: [filesystem.read, process.exec]
+
+  - id: db-read-bridge
+    kind: bridge
+    version: 0.4.0
+    source: {type: local, path: components/db-read-bridge}
+    spec:
+      name: db_read_bridge
+      runtime: python
+      entrypoint: bridge.py
+      facts_only: true
+      actions: [db_explore]
+    requires:
+      - {type: resource, ref: risk-db}
+    effects: [network.egress, process.exec]
+
+  - id: code-read-bridge
+    kind: bridge
+    version: 0.4.0
+    source: {type: local, path: components/code-read-bridge}
+    spec:
+      name: code_read_bridge
+      runtime: python
+      entrypoint: bridge.py
+      facts_only: true
+      actions: [code_index]
+    requires:
+      - {type: resource, ref: source-code}
+      - {type: resource, ref: jca}
+    effects: [filesystem.read, process.exec]
+
+  - id: candidate-write-bridge
+    kind: bridge
+    version: 0.4.0
+    source: {type: local, path: components/candidate-write-bridge}
+    spec:
+      name: candidate_write_bridge
+      runtime: python
+      entrypoint: bridge.py
+      facts_only: true
+      actions: [suggest_contract, sem_handoff]
+    requires:
+      - {type: resource, ref: knowledge-store}
+    effects: [filesystem.read, knowledge.candidate_write]
+
+  # Skills describe how the model works; phase order is not repeated here.
+  - id: risk-dev-copilot-skill
+    kind: skill
+    version: 0.4.0
+    source: {type: local, path: components/risk-dev-copilot-skill}
+    spec:
+      name: risk-dev-copilot
+      description: 字段使用、规则检查和影响面查询引导
+      guide: 先定位字段，再执行规则检查；需要影响面时显式调用 ds_impact；所有结论标明信任层级和出处。
+      tools: [ds_explain_field, ds_check_leakage, ds_impact]
+      guardrails: [同一工具连续三次失败即停止并报告]
+    effects: []
+
+  - id: knowledge-steward-skill
+    kind: skill
+    version: 0.4.0
+    source: {type: local, path: components/knowledge-steward-skill}
+    spec:
+      name: knowledge-steward
+      description: 单表 candidate 契约沉淀引导
+      guide: DB 与代码双源探索均完成后才能生成 candidate；ds_validate 为零错误后进入人工批准。
+      tools: [ds_db_explore, ds_code_index, ds_suggest_contract, ds_validate]
+    effects: []
+
+  - id: semantic-curator-skill
+    kind: skill
+    version: 0.4.0
+    source: {type: local, path: components/semantic-curator-skill}
+    spec:
+      name: semantic-curator
+      description: 跨表语义梳理和人工交接引导
+      guide: 将问题分成就地修复、上报 Owner 和转 ETL；只写 candidate 与 issue，不代替 Owner 拍板。
+      tools: [ds_sem_handoff]
+    effects: []
+
+  - id: copilot-flow
+    kind: workflow
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: copilot-flow
+      seat: copilot
+      initial: locate
+      widget: single_line
+      phases:
+        - {id: locate}
+        - {id: rule-check}
+        - {id: answer}
+        - {id: impact}
+      transitions:
+        - {from: locate, to: rule-check, on: tool_succeeded, tool: ds_explain_field}
+        - {from: rule-check, to: answer, on: tool_succeeded, tool: ds_check_leakage}
+        - {from: answer, to: impact, on: manual, when: 用户要求分析影响面}
+      loops: []
+      human_checkpoints: []
+    effects: []
+
+  - id: steward-flow
+    kind: workflow
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: steward-flow
+      seat: steward
+      initial: explore-db
+      widget: panel
+      phases:
+        - {id: explore-db}
+        - {id: explore-code}
+        - {id: draft}
+        - {id: validate}
+      transitions:
+        - {from: explore-db, to: explore-code, on: tool_succeeded, tool: ds_db_explore}
+        - {from: explore-code, to: draft, on: tool_succeeded, tool: ds_code_index}
+        - {from: draft, to: validate, on: tool_succeeded, tool: ds_suggest_contract}
+      loops:
+        - {from: validate, to: draft, max_rounds: 3, when: 校验失败且仍有明确可修复项}
+      human_checkpoints:
+        - phase: validate
+          required: true
+          prompt: ds_validate 零错误后，由人决定是否 promote
+          approval: one_time
+          action: promote
+    effects: []
+
+  - id: curator-flow
+    kind: workflow
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: curator-flow
+      seat: curator
+      initial: triage
+      widget: single_line
+      phases:
+        - {id: triage}
+        - {id: handoff}
+      transitions:
+        - {from: triage, to: handoff, on: manual, when: 分类完成并准备写 candidate}
+      loops: []
+      human_checkpoints:
+        - phase: handoff
+          required: true
+          prompt: 展示 candidate 与 issue，等待人工接管
+          approval: one_time
+          action: handoff
+    effects: []
+
+  - id: contracts-knowledge
+    kind: knowledge
+    version: 0.4.0
+    source: {type: local, path: components/contracts-knowledge}
+    spec:
+      domain: contracts
+      schema: schemas/dataset-contract.schema.json
+    requires:
+      - {type: resource, ref: knowledge-store}
+    effects: [filesystem.read]
+
+  - id: candidate-contract-output
+    kind: output
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: candidate-contract
+      path: knowledge/contracts/candidate_*.json
+      media_type: application/json
+      lifecycle: candidate
+      publish: atomic_file
+    effects: [artifact.write]
+
+  - id: contract-review
+    kind: review
+    version: 0.4.0
+    source: {type: local, path: components/contract-review}
+    spec:
+      checks:
+        - {id: schema-validate, kind: schema, tool: ds_validate, severity: error}
+        - {id: citations-check, kind: citations, severity: warn}
+    effects: []
+
+assembly:
+  groups:
+    - id: query-path
+      components: [ds-explain-field, ds-check-leakage, ds-impact, knowledge-query-bridge, risk-dev-copilot-skill, copilot-flow]
+      mode: main
+    - id: steward-path
+      components: [ds-db-explore, ds-code-index, ds-suggest-contract, ds-validate, db-read-bridge, code-read-bridge, knowledge-query-bridge, candidate-write-bridge, knowledge-steward-skill, steward-flow, contracts-knowledge, candidate-contract-output, contract-review]
+      mode: main
+    - id: curator-path
+      components: [ds-sem-handoff, candidate-write-bridge, semantic-curator-skill, curator-flow]
+      mode: main
+  notes:
+    - group 只控制能力可见性；requires 控制依赖；workflow 控制执行顺序
+
+seats:
+  - id: copilot
+    name: 查询席位
+    persona: 只读问答，按信任层级和出处回答。
+    groups: [query-path]
+    mode: read_only
+    coms: quiet
+  - id: steward
+    name: 沉淀席位
+    persona: 只生成 candidate 契约，校验通过后等待人工批准。
+    groups: [steward-path]
+    mode: standard
+    coms: quiet
+  - id: curator
+    name: 语义梳理席位
+    persona: 只生成 candidate 与 issue，pending_owner 问题不拍板。
+    groups: [curator-path]
+    mode: standard
+    coms: quiet
+
+gate:
+  default: deny
+  filesystem:
+    write_allow:
+      - knowledge/**/candidate_*.json
+      - knowledge/**/semantic_issues.json
+      - knowledge/diagrams/**
+    delete_rule: single_candidate_only
+    param_check: true
+    zero_access: [.env, secrets/**, production/**]
+  bash:
+    allow_presets: [readonly, python_tools, drawio]
+    deny_presets: [install, git_push, rm_rf, inline_code, dangerous_git, production_write]
+    deny: ["knowledge promote", "knowledge manifest"]
+  egress:
+    policy: whitelist
+    allow: [resource:risk-db]
+  knowledge_write:
+    mode: candidate_only
+    paths:
+      - knowledge/**/candidate_*.json
+      - knowledge/**/semantic_issues.json
+  data:
+    deny_prompt_labels: [pii, secret]
+    redact_output_labels: [pii, secret]
+
+knowledge:
+  root: knowledge
+  lifecycle:
+    agent_write: candidate_only
+    candidate_prefix: candidate_
+    promote:
+      command: loom knowledge promote
+      post_validate: true
+    manifest: true
+  citations:
+    require_source: true
+    drift_check: true
+
+coms:
+  project: credit
+  experimental_acknowledged: true
+  auto_reply: true
+  delivery: filesystem
+  human_gates_via_coms: false
+
+launch:
+  binary: pi
+  base_flags: [-ne, -ns, -nc]
+  entries:
+    - {name: data-asset, seats: all, coms: true}
+    - {name: data-copilot, seat: copilot, workflow: copilot-flow, coms: false}
+    - {name: data-steward, seat: steward, workflow: steward-flow, coms: false}
+    - {name: data-curator, seat: curator, workflow: curator-flow, coms: false}
+
+settings:
+  model: null
+  auto_load: true

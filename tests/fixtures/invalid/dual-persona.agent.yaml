@@ -1,0 +1,31 @@
+apiVersion: agent-dsl/v1alpha1
+kind: Agent
+metadata: {id: invalid-persona, name: Invalid, purpose: Test, version: 0.4.0}
+identity:
+  role: Test agent
+  red_lines:
+    - {id: no-write, statement: Do not write, enforced_by: [gate.filesystem]}
+  can: [test]
+  cannot: [write]
+runtime: {kind: pi, version: 0.1.0, adapters: {ui: headless, execution: extensions}}
+components:
+  - id: test-persona
+    kind: persona
+    version: 0.1.0
+    source: {type: inline}
+    effects: []
+    spec: {name: test-persona, content: Test persona}
+assembly:
+  groups:
+    - {id: main, components: [test-persona], mode: main}
+seats:
+  - id: default
+    persona: Inline persona
+    persona_ref: test-persona
+    groups: [main]
+    mode: read_only
+gate:
+  default: deny
+  filesystem: {write_allow: [], delete_rule: none, param_check: true}
+  bash: {allow_presets: [], deny_presets: []}
+  egress: {policy: deny_all}

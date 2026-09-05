@@ -1,0 +1,25 @@
+apiVersion: agent-dsl/v1alpha1
+kind: Agent
+metadata: {id: invalid-preset, name: Invalid, purpose: Test, version: 0.4.0}
+identity:
+  role: Test agent
+  red_lines:
+    - {id: no-write, statement: Do not write, enforced_by: [gate.bash]}
+  can: [test]
+  cannot: [write]
+runtime: {kind: pi, version: 0.1.0, adapters: {ui: headless, execution: extensions}}
+components:
+  - id: test-skill
+    kind: skill
+    version: 0.1.0
+    source: {type: inline}
+    effects: []
+    spec: {name: test-skill, description: Test, guide: Do the test}
+assembly:
+  groups:
+    - {id: main, components: [test-skill], mode: main}
+gate:
+  default: deny
+  filesystem: {write_allow: [], delete_rule: none, param_check: true}
+  bash: {allow_presets: [root_shell], deny_presets: []}
+  egress: {policy: deny_all}

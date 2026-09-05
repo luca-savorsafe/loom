@@ -1,0 +1,200 @@
+# 最小可用智能体：单席位只读 FAQ。
+apiVersion: agent-dsl/v1alpha1
+kind: Agent
+
+metadata:
+  id: faq-bot
+  name: 制度问答坐席
+  purpose: 信贷制度文档问答（只读）
+  version: 0.4.0
+  domain: credit
+  icon: 📖
+  color: "#4a6fa5"
+
+identity:
+  role: |
+    你是制度问答坐席。所有结论必须带文档出处，查不到就明确说明不知道。
+  red_lines:
+    - id: documents-readonly
+      statement: 制度文档只读，禁止修改任何文档
+      enforced_by: [gate.filesystem, resource:policy-documents]
+  can:
+    - 检索制度文档并带出处回答
+  cannot:
+    - 猜测没有文档证据的事实
+  consult:
+    routes:
+      - topic: 代码层事实
+        target: tech-expert
+    unknown_policy: 未命中可靠出处时返回 unknown，不自行补全事实
+
+runtime:
+  kind: pi
+  version: 0.4.0
+  adapters:
+    memory: none
+    evolution: none
+    ui: tui
+    execution: extensions
+
+resources:
+  - id: policy-documents
+    kind: knowledge
+    access: read_only
+    locator:
+      path: knowledge/documents
+    data_labels: [internal]
+
+components:
+  - id: fq-tool
+    kind: tool
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: fq_doc_search
+      description: 制度文档章节检索
+      inputSchema:
+        type: object
+        additionalProperties: false
+        required: [query]
+        properties:
+          query: {type: string, minLength: 1}
+      outputSchema:
+        type: object
+        required: [status, summary, details]
+        properties:
+          status: {enum: [success, error]}
+          summary: {type: string}
+          details: {type: object}
+      binding:
+        bridge: faq-bridge
+        action: doc_search
+      phase: search
+      execution:
+        timeout_seconds: 30
+        idempotent: true
+    requires:
+      - {type: bridge, ref: faq-bridge, action: doc_search}
+    effects: []
+
+  - id: faq-bridge
+    kind: bridge
+    version: 0.4.0
+    source: {type: local, path: components/faq-bridge}
+    spec:
+      name: faq_bridge
+      runtime: python
+      entrypoint: bridge.py
+      facts_only: true
+      actions: [doc_search]
+    requires:
+      - {type: resource, ref: policy-documents}
+    effects: [filesystem.read]
+
+  - id: faq-answer-skill
+    kind: skill
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: faq-answer
+      description: 当用户询问信贷制度、流程或规定时使用
+      guide: |
+        调用 fq_doc_search 检索。基于命中章节回答并给出《文档名》§章节；
+        未命中可靠章节时明确返回 unknown。
+      tools: [fq_doc_search]
+      guardrails:
+        - 同一工具连续三次失败即停止并报告，不绕过 gate
+    requires:
+      - {type: tool, ref: fq-tool}
+    effects: []
+
+  - id: faq-flow
+    kind: workflow
+    version: 0.4.0
+    source: {type: inline}
+    spec:
+      name: faq-flow
+      seat: default
+      initial: search
+      widget: single_line
+      phases:
+        - {id: search, description: 检索可靠章节}
+        - {id: answer, description: 基于出处回答}
+      transitions:
+        - from: search
+          to: answer
+          on: tool_succeeded
+          tool: fq_doc_search
+      loops: []
+      human_checkpoints: []
+    requires:
+      - {type: skill, ref: faq-answer-skill}
+    effects: []
+
+  - id: faq-knowledge
+    kind: knowledge
+    version: 0.4.0
+    source: {type: local, path: components/faq-knowledge}
+    spec:
+      domain: documents
+      schema: schemas/doc-index.schema.json
+    requires:
+      - {type: resource, ref: policy-documents}
+    effects: [filesystem.read]
+
+assembly:
+  groups:
+    - id: faq-path
+      components: [fq-tool, faq-bridge, faq-answer-skill, faq-flow, faq-knowledge]
+      mode: main
+      description: 只读检索与回答能力
+  notes:
+    - 依赖只在 requires 声明，执行顺序只在 workflow 声明
+
+seats:
+  - id: default
+    name: 问答席位
+    persona: 你是制度问答席位；faq-answer skill 提供回答指引，faq-flow 负责阶段推进。
+    groups: [faq-path]
+    mode: read_only
+    coms: quiet
+
+gate:
+  default: deny
+  filesystem:
+    write_allow: []
+    delete_rule: none
+    param_check: true
+    zero_access: [.env, secrets/**]
+  bash:
+    allow_presets: [readonly, python_tools]
+    deny_presets: [network, install, git_push, rm_rf, inline_code, dangerous_git]
+  egress:
+    policy: deny_all
+  data:
+    deny_prompt_labels: [pii, secret]
+    redact_output_labels: [pii, secret]
+
+knowledge:
+  root: knowledge
+  lifecycle:
+    agent_write: candidate_only
+    candidate_prefix: candidate_
+    manifest: true
+  citations:
+    require_source: true
+    drift_check: true
+
+launch:
+  binary: pi
+  base_flags: [-ne, -ns, -nc]
+  entries:
+    - name: faq
+      seat: default
+      workflow: faq-flow
+      coms: false
+
+settings:
+  model: null
+  theme: nord
+  auto_load: true

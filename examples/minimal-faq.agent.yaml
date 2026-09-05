@@ -1,141 +1,306 @@
-# 最小可用智能体：一个只读问答坐席（纯 components-first）
-# 全部组件内联声明，编译器归一为匿名组件；agen init 生成骨架后只需填这些
-apiVersion: agent-dsl/v1
+# v0.5 / v1alpha2 静态契约样例，引用的业务程序与运行时需另行提供。
+apiVersion: agent-dsl/v1alpha2
 kind: Agent
-
 metadata:
   id: faq-bot
   name: 制度问答坐席
   purpose: 信贷制度文档问答（只读）
-  version: 0.1.0
+  version: 0.4.0
   domain: credit
   icon: 📖
   color: "#4a6fa5"
-
 identity:
   role: |
-    你是制度问答坐席，回答信贷制度文档相关的问题。
-    所有结论必须带文档出处（《文档名》§章节），查不到就明说不知道。
+    你是制度问答坐席。所有结论必须带文档出处，查不到就明确说明不知道。
   red_lines:
-    - 制度文档只读，禁止修改任何文档
+    - id: documents-readonly
+      statement: 制度文档只读，禁止修改任何文档
+      enforced_by:
+        - gate.filesystem
+        - resource:policy-documents
   can:
     - 检索制度文档并带出处回答
   cannot:
-    - 不回答代码层事实，路由给 tech-expert
-    - 判断不了的业务语义不猜，登记 unknown
-  consult:
-    routes:
-      - topic: 代码层事实
-        target: tech-expert
-
+    - 猜测没有文档证据的事实
+runtime:
+  kind: pi
+  version: 0.4.0
+  adapters:
+    memory: none
+    evolution: none
+    ui: tui
+    execution: extensions
+resources:
+  - id: policy-documents
+    kind: knowledge
+    access: read_only
+    locator:
+      path: knowledge/documents
+    data_labels:
+      - internal
 components:
   - id: fq-tool
     kind: tool
-    source: "inline:"
-    provides:
-      tool:
-        name: fq_doc_search
-        description: 制度文档章节检索
-        phase: search
-        params:
-          type: object
-          properties:
-            query: {type: string}
-          required: [query]
+    version: 0.4.0
+    source:
+      type: inline
+    spec:
+      name: fq_doc_search
+      description: 制度文档章节检索
+      inputSchema:
+        type: object
+        additionalProperties: false
+        required:
+          - query
+        properties:
+          query:
+            type: string
+            minLength: 1
+      outputSchema:
+        type: object
+        required:
+          - status
+          - summary
+          - details
+        properties:
+          status:
+            enum:
+              - success
+              - error
+          summary:
+            type: string
+          details:
+            type: object
+      binding:
+        bridge: faq-bridge
+        action: doc_search
+      execution:
+        timeout_seconds: 30
+        idempotent: true
     requires:
-      - bridge: faq-bridge.doc_search
-    policy:
-      readonly: true
-      side_effect: read_only
-
+      - type: bridge
+        ref: faq-bridge
+        action: doc_search
+    effects: []
   - id: faq-bridge
     kind: bridge
-    source: local:./components/faq-bridge    # 实现（python）由开发者写，编译器原样打包
-    provides:
-      bridge:
-        name: faq_bridge
-        actions: [doc_search]
-        reads: [knowledge/documents/]
-
+    version: 0.4.0
+    source:
+      type: local
+      path: components/faq-bridge
+    spec:
+      name: faq_bridge
+      runtime: python
+      entrypoint: bridge.py
+      facts_only: true
+      actions:
+        - doc_search
+    requires:
+      - type: resource
+        ref: policy-documents
+    effects:
+      - filesystem.read
   - id: faq-answer-skill
     kind: skill
-    source: "inline:"
-    provides:
-      skill:
-        name: faq-answer
-        description: 制度问答工作流：当用户询问信贷制度/流程/规定时使用
-        phases:
-          - id: search
-            guide: 用 fq_doc_search 检索相关章节
-            tools: [fq_doc_search]
-            exit_criteria: 命中至少一个相关章节
-          - id: answer
-            guide: 基于命中章节组织回答，必须带《文档名》§章节出处；未命中明说不知道
-        guardrails:
-          - 同一工具连续 3 次失败即停下报告，不绕过
-
+    version: 0.4.0
+    source:
+      type: inline
+    spec:
+      name: faq-answer
+      description: 当用户询问信贷制度、流程或规定时使用
+      guide: |
+        调用 fq_doc_search 检索。基于命中章节回答并给出《文档名》§章节；
+        未命中可靠章节时明确返回 unknown。
+      tools:
+        - fq_doc_search
+      guardrails:
+        - 同一工具连续三次失败即停止并报告，不绕过 gate
+    requires:
+      - type: tool
+        ref: fq-tool
+    effects: []
   - id: faq-flow
     kind: workflow
-    source: "inline:"
-    provides:
-      workflow:
-        name: faq-flow
-        seat: default
-        widget: single_line
-        phases: [search, answer]
-        transitions:
-          - from: search
-            to: answer
-
+    version: 0.4.0
+    source:
+      type: inline
+    spec:
+      name: faq-flow
+      initial: search
+      widget: single_line
+      phases:
+        - id: search
+          description: 检索可靠章节
+          role: executor
+          tools:
+            - fq_doc_search
+        - id: answer
+          description: 基于出处回答
+          role: executor
+      transitions:
+        - from: search
+          to: answer
+          on: tool_succeeded
+          tool: fq_doc_search
+      loops: []
+      human_checkpoints: []
+      roles:
+        - executor
+      terminal:
+        - answer
+    requires:
+      - type: tool
+        ref: fq-tool
+    effects: []
   - id: faq-knowledge
     kind: knowledge
-    source: local:./components/faq-knowledge
-    provides:
-      knowledge:
-        domain: documents
-
+    version: 0.4.0
+    source:
+      type: local
+      path: components/faq-knowledge
+    spec:
+      domain: documents
+      schema: schemas/doc-index.schema.json
+    requires:
+      - type: resource
+        ref: policy-documents
+    effects:
+      - filesystem.read
 assembly:
-  entrypoints: [fq-tool, faq-answer-skill]
   groups:
-    - name: faq-path
-      seat: default
-      components: [fq-tool, faq-bridge, faq-answer-skill, faq-flow, faq-knowledge]
+    - id: faq-path
+      components:
+        - fq-tool
+        - faq-bridge
+        - faq-answer-skill
+        - faq-knowledge
       mode: main
-  routes:
-    - from: fq-tool
-      to: faq-bridge
-      kind: main
-  checkpoints: []
+      description: 只读检索与回答能力
   notes:
-    - 单席位只读问答：search → answer，无写路径
-
+    - 依赖只在 requires 声明，执行顺序只在 workflow 声明
 seats:
   - id: default
     name: 问答席位
-    persona: |
-      你是制度问答席位。工作流细节见 faq-answer skill。
-    groups: [faq-path]
-    readonly: true
+    persona: 你是制度问答席位；faq-answer skill 提供回答指引，faq-flow 负责阶段推进。
+    groups:
+      - faq-path
+    mode: read_only
     coms: quiet
-
 gate:
+  default: deny
   filesystem:
-    write_allow: []          # 完全只读坐席
+    write_allow: []
+    delete_rule: none
+    param_check: true
+    zero_access:
+      - .env
+      - secrets/**
   bash:
-    allow_presets: [readonly, python_tools]
-    deny_presets: [network, install, git_push, rm_rf, inline_code]
+    allow_presets:
+      - readonly
+      - python_tools
+    deny_presets:
+      - network
+      - install
+      - git_push
+      - rm_rf
+      - inline_code
+      - dangerous_git
   egress:
     policy: deny_all
-
+  data:
+    deny_prompt_labels:
+      - pii
+      - secret
+    redact_output_labels:
+      - pii
+      - secret
 knowledge:
-  root: knowledge/
+  root: knowledge
   lifecycle:
     agent_write: candidate_only
-    candidate_prefix: "candidate_"
-
-coms:
-  project: credit
-
+    candidate_prefix: candidate_
+    manifest: true
+  citations:
+    require_source: true
+    drift_check: true
+launch:
+  binary: pi
+  base_flags:
+    - -ne
+    - -ns
+    - -nc
+  entries:
+    - name: policy-qa
+      task: policy-qa
+      coms: false
+    - name: policy-explain
+      task: policy-explain
+      coms: false
 settings:
   model: null
   theme: nord
+  auto_load: true
+tasks:
+  - id: policy-qa
+    objective: 基于制度证据回答问题
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required:
+        - question
+      properties:
+        question:
+          type: string
+          minLength: 1
+    resultSchema:
+      type: object
+      additionalProperties: false
+      required:
+        - answer
+        - sources
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+    interaction:
+      mode: interactive
+      on_missing_input: ask
+    delivery:
+      mode: caller
+    seat: default
+    workflow: faq-flow
+  - id: policy-explain
+    objective: 解释已检索制度的适用范围与限制
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required:
+        - question
+      properties:
+        question:
+          type: string
+          minLength: 1
+    resultSchema:
+      type: object
+      additionalProperties: false
+      required:
+        - answer
+        - sources
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+    interaction:
+      mode: interactive
+      on_missing_input: ask
+    delivery:
+      mode: caller
+    seat: default
+    workflow: faq-flow

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://loom.local/schema/agent-v1alpha2.schema.json",
-  "title": "Loom Agent DSL v0.5",
-  "description": "面向任务的声明式 Agent：身份、显式能力、角色绑定、单向依赖和默认拒绝；不代表运行时已经实现。",
+  "$id": "https://loom.dev/schemas/agent-dsl-v1alpha1.schema.json",
+  "title": "Loom Agent DSL v1alpha1",
+  "description": "Loom v0.4 声明式智能体契约。组件按 kind 强类型校验；高级适配器为实验能力。",
   "type": "object",
   "required": [
     "apiVersion",
@@ -11,14 +11,15 @@
     "identity",
     "runtime",
     "components",
+    "assembly",
     "gate"
   ],
   "additionalProperties": false,
   "properties": {
     "apiVersion": {
-      "const": "agent-dsl/v1alpha2",
+      "const": "agent-dsl/v1alpha1",
       "title": "apiVersion",
-      "description": "语言契约版本固定为 agent-dsl/v1alpha2；不接受旧版流程与岗位反向绑定。"
+      "description": "选择语言语义版本，固定为 agent-dsl/v1alpha1；不是 Agent 业务版本。旧版清单须先迁移。"
     },
     "kind": {
       "const": "Agent",
@@ -61,7 +62,7 @@
     "assembly": {
       "$ref": "#/$defs/assembly",
       "title": "assembly",
-      "description": "可选的共享能力包；只装 skill/tool/bridge/knowledge，无顺序、策略或角色绑定。"
+      "description": "将组件组织为具名静态能力集合，供 seat 引用；不产生执行顺序。"
     },
     "seats": {
       "type": "array",
@@ -70,7 +71,7 @@
       },
       "default": [],
       "title": "seats",
-      "description": "可复用岗位配置目录；不反向登记任务，不自动构成进程或权限隔离。"
+      "description": "同一 Agent 内的角色与能力视图；每个 seat 有自己的 group 集合和 persona。"
     },
     "gate": {
       "$ref": "#/$defs/gate",
@@ -100,21 +101,12 @@
     "launch": {
       "$ref": "#/$defs/launch",
       "title": "launch",
-      "description": "启动宿主并选择一个 task 或自由对话 seat；不创建定时器和外部订阅。"
+      "description": "声明 Pi 启动参数、启动哪些 seat、可选 workflow 和通信开关。"
     },
     "settings": {
       "$ref": "#/$defs/settings",
       "title": "settings",
       "description": "模型、主题和加载偏好；不能覆盖 gate 或凭空引入未声明组件。"
-    },
-    "tasks": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "$ref": "#/$defs/task"
-      },
-      "description": "可重复调用的业务任务目录，不是运行实例；任务输入、结果、执行配置及交付契约独立于工具。",
-      "title": "tasks"
     }
   },
   "allOf": [
@@ -450,7 +442,7 @@
         "kind": {
           "const": "pi",
           "title": "kind",
-          "description": "当前仅定义 Pi 执行目标，决定生成代码后端；不表示宿主已安装。"
+          "description": "v0.4 唯一的 Agent 执行目标，决定生成代码后端。"
         },
         "version": {
           "$ref": "#/$defs/semver",
@@ -712,7 +704,7 @@
             "runtime"
           ],
           "title": "type",
-          "description": "目标命名空间与 kind；component 通用引用也须经过源/目标 kind 白名单检查，不允许向上引用。"
+          "description": "声明目标命名空间和类型；component 可引用任意 kind，tool/skill/knowledge 进一步限制目标 kind。"
         },
         "ref": {
           "$ref": "#/$defs/id",
@@ -756,7 +748,7 @@
         }
       ],
       "title": "dependency",
-      "description": "组件能力依赖的声明；bridge 分支精确声明 action，task/seat 组合引用不写回 requires。"
+      "description": "静态依赖的唯一声明；bridge 分支额外精确声明 action。"
     },
     "effect": {
       "enum": [
@@ -829,7 +821,7 @@
           },
           "default": [],
           "title": "requires",
-          "description": "组件能力依赖边的唯一来源；task/seat 的组合引用另行定义，数组顺序不是执行顺序，binding 必须匹配。"
+          "description": "静态依赖边唯一来源；顺序不表示执行次序，tool binding 的 bridge/action 必须同步出现。"
         },
         "effects": {
           "type": "array",
@@ -966,6 +958,11 @@
           "title": "binding",
           "description": "显式绑定一个 bridge action；不接受任意命令字符串。"
         },
+        "phase": {
+          "$ref": "#/$defs/id",
+          "title": "phase",
+          "description": "主要工作阶段标注，须在适用 workflow 内存在；不是流转规则，也没有自动授权含义。"
+        },
         "execution": {
           "type": "object",
           "required": [
@@ -1048,7 +1045,7 @@
         "entrypoint": {
           "$ref": "#/$defs/relativePath",
           "title": "entrypoint",
-          "description": "可执行实现入口；local/registry 相对组件根，inline 相对项目根；打包验证存在性和真实路径，不自动生成程序。"
+          "description": "可执行实现入口；打包时必须存在，inline 来源也不会自动生成此文件。当前 Schema 不解决组件根/项目根基准，见主规范路径边界。"
         },
         "facts_only": {
           "const": true,
@@ -1128,7 +1125,7 @@
             "pattern": "^[a-z][a-z0-9_]*_[a-z0-9_]+$"
           },
           "title": "tools",
-          "description": "指引会使用的模型工具名；须存在并在实际任务执行角色的能力闭包中，不授予新的可见性。"
+          "description": "指引会使用的模型工具名；须存在并在 seat 中可见，不授予新的可见性。"
         },
         "guardrails": {
           "type": "array",
@@ -1181,9 +1178,8 @@
       "type": "object",
       "required": [
         "name",
-        "roles",
+        "seat",
         "initial",
-        "terminal",
         "phases"
       ],
       "additionalProperties": false,
@@ -1192,6 +1188,11 @@
           "$ref": "#/$defs/id",
           "title": "name",
           "description": "流程逻辑名，组件引用仍使用组件 id。"
+        },
+        "seat": {
+          "$ref": "#/$defs/id",
+          "title": "seat",
+          "description": "拥有此流程状态的席位，必须存在；不能把另一个 seat 的工具直接拿来调用。"
         },
         "initial": {
           "$ref": "#/$defs/id",
@@ -1214,8 +1215,7 @@
           "items": {
             "type": "object",
             "required": [
-              "id",
-              "role"
+              "id"
             ],
             "additionalProperties": false,
             "properties": {
@@ -1228,22 +1228,6 @@
                 "type": "string",
                 "title": "description",
                 "description": "阶段职责说明；不是自动完成条件。"
-              },
-              "role": {
-                "$ref": "#/$defs/id",
-                "description": "阶段执行角色，必须为本流程声明的局部槽位，不是 Agent seat id。",
-                "title": "role"
-              },
-              "tools": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_]*_[a-z0-9_]+$"
-                },
-                "default": [],
-                "description": "此阶段允许调用的模型工具名；须在 requires 和绑定角色能力闭包中，省略表示不允许工具调用。",
-                "title": "tools"
               }
             }
           },
@@ -1276,30 +1260,10 @@
           "default": [],
           "title": "human_checkpoints",
           "description": "必须等待真实人工批准的阶段闸门；无审批需求时省略。"
-        },
-        "roles": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/id"
-          },
-          "description": "流程局部角色槽位名；单执行者任务要求仅 executor，多角色任务须精确匹配角色集合。",
-          "title": "roles"
-        },
-        "terminal": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/id"
-          },
-          "description": "成功终态阶段集合；终态无外出边，完成后仍须结果校验和任务验收。",
-          "title": "terminal"
         }
       },
       "title": "workflowSpec",
-      "description": "可复用角色槽位与事件驱动阶段图；task 绑定岗位，工具不反向知道阶段。"
+      "description": "某一 seat 的显式阶段目录、事件转移、有限循环和人工确认点。"
     },
     "transition": {
       "type": "object",
@@ -1351,7 +1315,6 @@
       "required": [
         "from",
         "to",
-        "on",
         "max_rounds"
       ],
       "additionalProperties": false,
@@ -1371,34 +1334,17 @@
           "minimum": 1,
           "maximum": 100,
           "title": "max_rounds",
-          "description": "该回边每次运行最多执行的次数，1 到 100；恢复必须保留计数，达到上限不能再推进该边。"
+          "description": "允许的迭代硬上限，不能用软建议替代；计数须随运行状态保存。"
         },
         "when": {
           "type": "string",
           "minLength": 1,
           "title": "when",
-          "description": "仅解释回退理由，不决定是否回退；机器触发使用 on 与可选 tool。"
-        },
-        "on": {
-          "enum": [
-            "phase_completed",
-            "tool_succeeded",
-            "tool_failed",
-            "approval_granted",
-            "manual"
-          ],
-          "title": "on",
-          "description": "phase_completed/tool_succeeded/tool_failed/approval_granted/manual；事件来自可信执行或交互通道，不执行 when 文本。"
-        },
-        "tool": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*_[a-z0-9_]+$",
-          "title": "tool",
-          "description": "绑定事件所属的模型工具名；其他事件不应配置此项。"
+          "description": "解释为什么迭代，不定义机器触发条件；单独配置此文字不足以实现自主循环。"
         }
       },
       "title": "loop",
-      "description": "给一个明确匹配 from/to/on/tool 的转移加次数上限；删除所有受限边后阶段图必须无环。"
+      "description": "回退阶段和硬次数上限；此结构未完整规定独立循环触发和持久化协议。"
     },
     "humanCheckpoint": {
       "type": "object",
@@ -1799,7 +1745,7 @@
                   "$ref": "#/$defs/id"
                 },
                 "title": "components",
-                "description": "静态能力成员，仅 skill/tool/bridge/knowledge；不包含 workflow/review/output/gate/persona 或其他 group。"
+                "description": "直接成员的组件 id；其依赖由 requires 补全，不在此复制执行顺序。"
               },
               "mode": {
                 "enum": [
@@ -1837,14 +1783,33 @@
       "type": "object",
       "required": [
         "id",
+        "groups",
         "mode"
       ],
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "persona"
+          ],
+          "properties": {
+            "persona": true
+          }
+        },
+        {
+          "required": [
+            "persona_ref"
+          ],
+          "properties": {
+            "persona_ref": true
+          }
+        }
+      ],
       "properties": {
         "id": {
           "$ref": "#/$defs/id",
           "title": "id",
-          "description": "岗位稳定标识，在 seats 内唯一，供 task、任务角色或自由对话入口引用。"
+          "description": "席位稳定标识，在 seats 内唯一，供 workflow.seat 与 launch.entry.seat 引用。"
         },
         "name": {
           "type": "string",
@@ -1888,102 +1853,10 @@
           ],
           "title": "coms",
           "description": "席位会诊参与偏好，不替代入口和顶层通信配置；省略时无 Schema 默认承诺。"
-        },
-        "components": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/id"
-          },
-          "description": "直接选择 skill/tool/bridge/knowledge 的组件 id，与 groups 严格二选一；依赖闭包由 requires 展开。",
-          "title": "components"
         }
       },
       "title": "seat",
-      "description": "可跨任务复用的岗位身份、能力选择及只读限制；不是入口或运行实例。",
-      "allOf": [
-        {
-          "oneOf": [
-            {
-              "required": [
-                "persona"
-              ],
-              "not": {
-                "required": [
-                  "persona_ref"
-                ],
-                "properties": {
-                  "persona_ref": true
-                }
-              },
-              "properties": {
-                "persona": true
-              }
-            },
-            {
-              "required": [
-                "persona_ref"
-              ],
-              "not": {
-                "required": [
-                  "persona"
-                ],
-                "properties": {
-                  "persona": true
-                }
-              },
-              "properties": {
-                "persona_ref": true
-              }
-            }
-          ]
-        },
-        {
-          "oneOf": [
-            {
-              "required": [
-                "groups"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "components"
-                    ],
-                    "properties": {
-                      "components": true
-                    }
-                  }
-                ]
-              },
-              "properties": {
-                "groups": true
-              }
-            },
-            {
-              "required": [
-                "components"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "groups"
-                    ],
-                    "properties": {
-                      "groups": true
-                    }
-                  }
-                ]
-              },
-              "properties": {
-                "components": true
-              }
-            }
-          ]
-        }
-      ]
+      "description": "Agent 内的角色与能力视图；并不自动等于独立进程或安全隔离域。"
     },
     "gate": {
       "type": "object",
@@ -2119,7 +1992,7 @@
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9_]*_[a-z0-9_]+$",
                     "title": "use_tool",
-                    "description": "诊断提示中的替代工具名，只能建议当前执行角色可用的工具；不形成自动调用或新增授权。"
+                    "description": "建议替代工具名，必须能被当前 seat 使用；提示不自动调用工具或授予权限。"
                   }
                 }
               },
@@ -2580,76 +2453,56 @@
           "minItems": 1,
           "items": {
             "type": "object",
-            "additionalProperties": false,
             "required": [
               "name",
               "coms"
             ],
-            "properties": {
-              "name": {
-                "$ref": "#/$defs/id",
-              "description": "启动入口的唯一名称，用于命令选择与审计定位。",
-                "title": "name"
-              },
-              "task": {
-                "$ref": "#/$defs/id",
-                "description": "任务 id，与 seat 二选一；执行配置由任务解析，不允许入口覆盖角色或流程。",
-                "title": "task"
-              },
-              "seat": {
-                "$ref": "#/$defs/id",
-                "description": "自由对话使用的岗位 id，与 task 二选一；无任务入口时不承诺任务输入结果契约。",
-                "title": "seat"
-              },
-              "coms": {
-                "type": "boolean",
-                "description": "此入口是否启用外部 Agent 通信；true 必须有顶层 coms 配置。",
-                "title": "coms"
-              }
-            },
-            "description": "入口选择一项业务任务或一个显式自由对话岗位，不接受 seats=all 或直接 workflow。",
+            "additionalProperties": false,
             "oneOf": [
               {
                 "required": [
-                  "task"
+                  "seats"
                 ],
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "seat"
-                      ],
-                      "properties": {
-                        "seat": true
-                      }
-                    }
-                  ]
-                },
                 "properties": {
-                  "task": true
+                  "seats": true
                 }
               },
               {
                 "required": [
                   "seat"
                 ],
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "task"
-                      ],
-                      "properties": {
-                        "task": true
-                      }
-                    }
-                  ]
-                },
                 "properties": {
                   "seat": true
                 }
               }
-            ]
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/id",
+                "title": "name",
+                "description": "入口名称，launch 内唯一，用于生成可调用命令。"
+              },
+              "seats": {
+                "const": "all",
+                "title": "seats",
+                "description": "启动已声明的全部席位；不生成新 seat，也不规定并行/顺序调度。"
+              },
+              "seat": {
+                "$ref": "#/$defs/id",
+                "title": "seat",
+                "description": "启动一个已声明席位。"
+              },
+              "workflow": {
+                "$ref": "#/$defs/id",
+                "title": "workflow",
+                "description": "启动时选择的 workflow 组件 id，单席入口要求流程归属一致；all+workflow 的调度语义尚未完整定义。"
+              },
+              "coms": {
+                "type": "boolean",
+                "title": "coms",
+                "description": "此入口是否启用通信；true 时需可用 coms 配置和适配器，不授权外部动作。"
+              }
+            }
           },
           "title": "entries",
           "description": "具名启动方式列表。"
@@ -2683,375 +2536,6 @@
       },
       "title": "settings",
       "description": "模型、主题与加载偏好，不能越过声明的能力和安全边界。"
-    },
-    "taskRole": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "responsibility"
-      ],
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/id",
-          "description": "任务局部角色 id，与 workflow 槽位匹配，不与全局 seat 混用。",
-          "title": "id"
-        },
-        "responsibility": {
-          "type": "string",
-          "minLength": 1,
-          "description": "本任务中该角色负责的业务部分；只能收窄全局身份和岗位边界。",
-          "title": "responsibility"
-        },
-        "seat": {
-          "$ref": "#/$defs/id",
-          "description": "复用岗位配置，与 components 二选一。",
-          "title": "seat"
-        },
-        "components": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/id"
-          },
-          "description": "角色直接选择的能力组件，与 seat 二选一；继承 Agent identity，不隐式获得全部能力。",
-          "title": "components"
-        }
-      },
-      "description": "一次业务所需的分工定义；每次运行创建独立角色上下文。",
-      "oneOf": [
-        {
-          "required": [
-            "seat"
-          ],
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "components"
-                ],
-                "properties": {
-                  "components": true
-                }
-              }
-            ]
-          },
-          "properties": {
-            "seat": true
-          }
-        },
-        {
-          "required": [
-            "components"
-          ],
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "seat"
-                ],
-                "properties": {
-                  "seat": true
-                }
-              }
-            ]
-          },
-          "properties": {
-            "components": true
-          }
-        }
-      ],
-      "title": "taskRole"
-    },
-    "task": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "objective",
-        "inputSchema",
-        "resultSchema",
-        "interaction",
-        "delivery"
-      ],
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/id",
-          "description": "可重复调用的任务标识，任务目录内唯一。",
-          "title": "id"
-        },
-        "objective": {
-          "type": "string",
-          "minLength": 1,
-          "description": "该业务服务要解决的问题；自然语言目标不等于机器可证明的成功标准。",
-          "title": "objective"
-        },
-        "components": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/id"
-          },
-          "description": "单执行者直接选择能力，继承 identity；与 seat、roles 三选一。",
-          "title": "components"
-        },
-        "seat": {
-          "$ref": "#/$defs/id",
-          "description": "单执行者复用的岗位；与 components、roles 三选一。",
-          "title": "seat"
-        },
-        "roles": {
-          "type": "array",
-          "minItems": 2,
-          "items": {
-            "$ref": "#/$defs/taskRole"
-          },
-          "description": "协作分工，至少两项且 id 唯一；需要 workflow 明确交接，不自动并行调度。",
-          "title": "roles"
-        },
-        "workflow": {
-          "$ref": "#/$defs/id",
-          "description": "workflow 组件 id；单执行者绑定 executor 槽位，多角色槽位与 roles 完全一致。",
-          "title": "workflow"
-        },
-        "inputSchema": {
-          "description": "整项任务的输入 JSON Schema；静态验证 Schema，运行时验证业务输入实例。",
-          "title": "inputSchema",
-          "anyOf": [
-            {
-              "type": "object"
-            },
-            {
-              "type": "boolean"
-            }
-          ]
-        },
-        "resultSchema": {
-          "description": "整项任务结果 JSON Schema；不包括受信运行状态、鉴权身份和回执。",
-          "title": "resultSchema",
-          "anyOf": [
-            {
-              "type": "object"
-            },
-            {
-              "type": "boolean"
-            }
-          ]
-        },
-        "interaction": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "mode",
-            "on_missing_input"
-          ],
-          "properties": {
-            "mode": {
-              "enum": [
-                "interactive",
-                "non_interactive"
-              ],
-              "description": "是否允许在同一请求中追问；后台无人值守任务用 non_interactive。",
-              "title": "mode"
-            },
-            "on_missing_input": {
-              "enum": [
-                "ask",
-                "fail"
-              ],
-              "description": "输入不足时追问或报错；ask 仅适用于 interactive，修正后重新校验完整输入。",
-              "title": "on_missing_input"
-            }
-          },
-          "description": "业务交互协议，不等于 UI 主题或 Agent 间通信。",
-          "not": {
-            "properties": {
-              "mode": {
-                "const": "non_interactive"
-              },
-              "on_missing_input": {
-                "const": "ask"
-              }
-            },
-            "required": [
-              "mode",
-              "on_missing_input"
-            ]
-          },
-          "title": "interaction"
-        },
-        "outputs": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/id"
-          },
-          "default": [],
-          "description": "任务声明的受管 output 组件；不是额外能力授权，生产和发布仍需执行器。",
-          "title": "outputs"
-        },
-        "acceptance": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "review",
-              "target"
-            ],
-            "properties": {
-              "review": {
-                "$ref": "#/$defs/id",
-                "description": "review 组件 id，定义检查方法及严重度。",
-                "title": "review"
-              },
-              "target": {
-                "type": "string",
-                "minLength": 1,
-                "description": "result 表示任务结果，否则为 tasks.outputs 中的 output 组件 id；result 为保留目标名。",
-                "title": "target"
-              },
-              "role": {
-                "$ref": "#/$defs/id",
-                "description": "验收执行上下文；多角色任务必填且引用局部角色，单执行者省略或为 executor。",
-                "title": "role"
-              }
-            },
-            "description": "交付前执行的检查绑定，不是组件反向引用任务。"
-          },
-          "description": "可选额外业务验收；输入和结果结构校验始终执行，检查失败不自动重跑写操作。",
-          "title": "acceptance"
-        },
-        "delivery": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "mode"
-          ],
-          "properties": {
-            "mode": {
-              "const": "caller",
-              "description": "返回原受信调用通道；不接受模型自由指定接收人，外部发布经独立授权能力完成。",
-              "title": "mode"
-            }
-          },
-          "description": "结果返回契约；生成、验收和送达状态分别记录。",
-          "title": "delivery"
-        }
-      },
-      "description": "Agent 对外提供的一类业务服务；不是待办步骤、岗位或运行实例。",
-      "allOf": [
-        {
-          "oneOf": [
-            {
-              "required": [
-                "components"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "seat"
-                    ],
-                    "properties": {
-                      "seat": true
-                    }
-                  },
-                  {
-                    "required": [
-                      "roles"
-                    ],
-                    "properties": {
-                      "roles": true
-                    }
-                  }
-                ]
-              },
-              "properties": {
-                "components": true
-              }
-            },
-            {
-              "required": [
-                "seat"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "components"
-                    ],
-                    "properties": {
-                      "components": true
-                    }
-                  },
-                  {
-                    "required": [
-                      "roles"
-                    ],
-                    "properties": {
-                      "roles": true
-                    }
-                  }
-                ]
-              },
-              "properties": {
-                "seat": true
-              }
-            },
-            {
-              "required": [
-                "roles"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "components"
-                    ],
-                    "properties": {
-                      "components": true
-                    }
-                  },
-                  {
-                    "required": [
-                      "seat"
-                    ],
-                    "properties": {
-                      "seat": true
-                    }
-                  }
-                ]
-              },
-              "properties": {
-                "roles": true
-              }
-            }
-          ]
-        },
-        {
-          "if": {
-            "required": [
-              "roles"
-            ],
-            "properties": {
-              "roles": true
-            }
-          },
-          "then": {
-            "required": [
-              "workflow"
-            ],
-            "properties": {
-              "workflow": true
-            }
-          }
-        }
-      ],
-      "title": "task"
     }
   }
 }

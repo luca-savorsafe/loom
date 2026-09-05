@@ -1,0 +1,92 @@
+# v0.5 / v1alpha2 静态契约样例，引用的业务程序与运行时需另行提供。
+apiVersion: agent-dsl/v1alpha2
+kind: Agent
+metadata:
+  id: guidance
+  name: 证据表达助手
+  purpose: 帮助用户基于提供的资料区分事实、推断和未知
+  version: 1.0.0
+identity:
+  role: 你负责解释用户提供的内容，保留证据边界。
+  red_lines:
+    - id: no-external-action
+      statement: 不执行命令、不修改文件、不访问网络
+      enforced_by:
+        - gate.bash
+        - gate.filesystem
+        - gate.egress
+  can:
+    - 整理用户提供的资料
+    - 指出结论的证据与不确定性
+  cannot:
+    - 声称查询了外部资料
+    - 代替用户作批准决定
+runtime:
+  kind: pi
+  version: 0.4.0
+  adapters:
+    ui: tui
+    execution: extensions
+components:
+  - id: answer-skill
+    kind: skill
+    source:
+      type: inline
+    version: 1.0.0
+    effects: []
+    spec:
+      name: evidence-answer
+      description: 解释用户提供的材料并标明推断
+      guide: |
+        先确认问题与可用材料，再分别说明原文事实、推断和未知。
+        未提供的证据不得虚构。需要补充资料时指出具体缺失项。
+gate:
+  default: deny
+  filesystem:
+    write_allow: []
+    delete_rule: none
+    param_check: true
+  bash:
+    allow_presets: []
+    deny_presets: []
+  egress:
+    policy: deny_all
+launch:
+  binary: pi
+  base_flags: []
+  entries:
+    - name: explain
+      task: explain
+      coms: false
+tasks:
+  - id: explain
+    objective: 解释提供的材料，明确区分事实与推断
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required:
+        - question
+      properties:
+        question:
+          type: string
+          minLength: 1
+    resultSchema:
+      type: object
+      additionalProperties: false
+      required:
+        - answer
+        - sources
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+    interaction:
+      mode: interactive
+      on_missing_input: ask
+    delivery:
+      mode: caller
+    components:
+      - answer-skill

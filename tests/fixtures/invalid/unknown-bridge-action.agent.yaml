@@ -1,0 +1,38 @@
+apiVersion: agent-dsl/v1alpha1
+kind: Agent
+metadata: {id: invalid-action, name: Invalid, purpose: Test, version: 0.4.0}
+identity:
+  role: Test agent
+  red_lines:
+    - {id: no-write, statement: Do not write, enforced_by: [gate.filesystem]}
+  can: [test]
+  cannot: [write]
+runtime: {kind: pi, version: 0.1.0, adapters: {ui: headless, execution: extensions}}
+components:
+  - id: test-bridge
+    kind: bridge
+    version: 0.1.0
+    source: {type: inline}
+    effects: []
+    spec: {name: test_bridge, runtime: python, entrypoint: tools/test.py, facts_only: true, actions: [run]}
+  - id: test-tool
+    kind: tool
+    version: 0.1.0
+    source: {type: inline}
+    effects: []
+    requires:
+      - {type: bridge, ref: test-bridge, action: missing}
+    spec:
+      name: test_run
+      description: Test unknown bridge action
+      inputSchema: {type: object}
+      outputSchema: {type: object}
+      binding: {bridge: test-bridge, action: missing}
+assembly:
+  groups:
+    - {id: main, components: [test-bridge, test-tool], mode: main}
+gate:
+  default: deny
+  filesystem: {write_allow: [], delete_rule: none, param_check: true}
+  bash: {allow_presets: [], deny_presets: []}
+  egress: {policy: deny_all}
