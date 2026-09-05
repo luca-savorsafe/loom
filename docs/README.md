@@ -6,12 +6,13 @@
 
 1. [主规范](AGENT_DSL_SPEC.md)：从身份、任务输入到执行、交付和验收。
 2. [依赖模型](DEPENDENCY_MODEL.md)：关系图、允许引用、禁止反向依赖与职责边界。
-3. [字段参考](DSL_FIELD_REFERENCE.md)：每个配置的类型、必要性、默认、阶段和约束。
-4. [纯指导任务](../examples/guidance.agent.yaml)：无 seat、无 assembly。
-5. [FAQ 岗位复用](../examples/minimal-faq.agent.yaml)：多个任务共享岗位及流程。
-6. [多角色候选维护](../examples/data-asset.agent.yaml)：分工、回退、人审、产物与验收。
-7. [编译器说明](COMPILER_DESIGN.md)：静态检查与运行时契约分界。
-8. [迁移指南](MIGRATION_V0_4_TO_V0_5.md)、[模板](../templates/)、[当前 Schema](../schema/agent.schema.json)。
+3. [Mermaid 图集](../diagrams/README.md)：整体模型、依赖、装配、运行及知识生命周期。
+4. [字段参考](DSL_FIELD_REFERENCE.md)：每个配置的类型、必要性、默认、阶段和约束。
+5. [纯指导任务](../examples/guidance.agent.yaml)：无 seat、无 assembly。
+6. [FAQ 岗位复用](../examples/minimal-faq.agent.yaml)：多个任务共享岗位及流程。
+7. [多角色候选维护](../examples/data-asset.agent.yaml)：分工、回退、人审、产物与验收。
+8. [编译器说明](COMPILER_DESIGN.md)：静态检查与运行时契约分界。
+9. [迁移指南](MIGRATION_V0_4_TO_V0_5.md)、[模板](../templates/)、[当前 Schema](../schema/agent.schema.json)。
 
 ## 一句话关系
 

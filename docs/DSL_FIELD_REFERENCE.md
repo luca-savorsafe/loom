@@ -15,7 +15,7 @@
 - relativePath：禁止绝对路径、~ 和 .. 路径段，运行时仍须检查 symlink。local/registry 组件资产相对组件根；inline 和 resource 路径相对项目根。
 - envName：大写环境变量名，不填变量值或凭据。
 - 可选 effects：filesystem.read、filesystem.write、process.exec、network.egress、knowledge.candidate_write、artifact.write、external.write。它们是动作请求，不是授权。
-- allow presets：readonly、git_add_commit、python_tools、drawio、controlled_cli；deny presets：network、install、git_push、rm_rf、inline_code、dangerous_git、production_write。精确行为由固定版本 adapter 提供；名称不构成隔离证明。
+- allow presets：readonly、git_add_commit、python_tools、controlled_cli；deny presets：network、install、git_push、rm_rf、inline_code、dangerous_git、production_write。精确行为由固定版本 adapter 提供；名称不构成隔离证明。
 
 ## 1. 顶层 Agent
 

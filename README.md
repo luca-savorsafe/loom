@@ -10,6 +10,7 @@ Loom 是声明式 Agent 构建框架的规范与静态校验项目。一个 Agen
 
 - [主规范](docs/AGENT_DSL_SPEC.md)：你是谁、承接什么、怎么执行、怎样交付和验收。
 - [依赖关系图与职责](docs/DEPENDENCY_MODEL.md)：任务、角色、岗位、组件、资源和策略各司其职。
+- [Mermaid 图集](diagrams/README.md)：整体模型、依赖边界、装配、运行与知识生命周期。
 - [逐字段参考](docs/DSL_FIELD_REFERENCE.md)与 [Schema](schema/agent.schema.json)。
 - [最小任务](examples/guidance.agent.yaml)、[岗位复用](examples/minimal-faq.agent.yaml)、[多角色协作](examples/data-asset.agent.yaml)。
 - [编译器设计](docs/COMPILER_DESIGN.md)、[迁移指南](docs/MIGRATION_V0_4_TO_V0_5.md)、[完整导航](docs/README.md)。
@@ -33,8 +34,6 @@ npm test
 
 同时验证历史 v0.4 和现行 v0.5，包含 Schema、引用与分层、角色/流程、文档覆盖及完整静态样例。正式业务程序和 adapter 不随样例提供。
 
-## 历史图示
+## 图示维护方式
 
-![历史模型图](diagrams/model-overview.drawio.png)
-
-此图按用户要求未修改，是历史模型。v0.5 依赖关系以[现行关系图](docs/DEPENDENCY_MODEL.md)为准。
+现行图只维护 [Markdown Mermaid 图集](diagrams/README.md)。历史 Draw.io 源文件和 PNG 导出已移入 `diagrams/bak/`，仅用于追溯，不再作为规范图或编辑入口。

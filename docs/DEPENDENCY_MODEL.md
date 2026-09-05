@@ -16,39 +16,13 @@
 
 ## 2. 静态依赖总图
 
-```mermaid
-flowchart TD
-  E[部署入口 / launch] --> T[task 业务契约与角色绑定]
-  T --> S[seat 可复用岗位配置]
-  T --> TR[task.role 业务分工]
-  TR --> S
-  TR --> C[直接选择的能力组件]
-  T --> W[workflow 流程定义]
-  T --> R[review 检查定义]
-  T --> O[output 产物定义]
-  T --> C[直接选择的能力组件]
-  S --> A[assembly 能力包]
-  S --> C
-  S --> P[persona 角色文本]
-  A --> C
-  W --> R
-  W --> C
-  R --> U[tool 模型调用接口]
-  C --> K[skill 操作方法]
-  C --> U
-  C --> N[knowledge 知识域]
-  C --> B[bridge 确定性执行]
-  K --> U
-  K --> N
-  U --> B
-  B --> N
-  B --> X[resources 受控资源]
-  N --> X
-```
+[查看并维护静态依赖图](../diagrams/02-dependency-boundaries.md)。
 
 “直接选择的能力组件”是图上的分类节点，不是新增 DSL 对象。它只包括 skill/tool/bridge/knowledge，不包括 workflow/review/output/persona/gate。
 
 workflow/review/output 仍可存放在 components 容器中，但属于不同语义类别；同在一个数组不代表可任意互相依赖。不新增十种顶层对象，也不允许一个通用 requires 绕过类别约束。
+
+对应的可维护 Mermaid 图见[图集](../diagrams/README.md)；本规范不再维护 Draw.io 图。
 
 output 的路径和生命周期是资产契约；真实生成、读写和发布由 task 选定的执行能力完成。output 不反向依赖生产它的 task、workflow 或 bridge。
 
@@ -123,18 +97,7 @@ workflow 定义局部角色槽位；task 引用它时提供完全匹配的角色
 
 ## 6. 约束组合不是依赖倒挂
 
-```mermaid
-flowchart LR
-  D[组件声明 effects 和资源需求] --> Q[动作请求]
-  Q --> V[策略求值 / 运行时拦截]
-  G[Agent gate] --> V
-  H[可复用 gate 拒绝规则] --> V
-  E[环境授权与隔离] --> V
-  S[seat 或角色只读限制] --> V
-  R[resource 访问模式和标签] --> V
-  K[知识生命周期限制] --> V
-  V --> A[允许执行 / 拒绝并审计]
-```
+[查看并维护策略约束图](../diagrams/02-dependency-boundaries.md)。
 
 这张图是约束输入流，不是静态组件依赖图。资源不需要引用 gate 才能受控，gate 不需要引用 task 才能限制任务。
 

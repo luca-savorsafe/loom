@@ -2206,7 +2206,6 @@
         "readonly",
         "git_add_commit",
         "python_tools",
-        "drawio",
         "controlled_cli"
       ],
       "title": "allowPreset",
